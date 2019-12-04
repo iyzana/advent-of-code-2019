@@ -1,9 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[aoc_generator(day3)]
 fn parse(input: &str) -> (Wire, Wire) {
     let mut lines = input.lines();
-    (lines.next().unwrap().into(), lines.next().unwrap().into())
+    (
+        Wire::from(lines.next().unwrap()),
+        Wire::from(lines.next().unwrap()),
+    )
 }
 
 #[derive(Debug)]
@@ -13,70 +16,60 @@ struct Wire {
 
 impl From<&str> for Wire {
     fn from(line: &str) -> Self {
-        use std::iter::successors;
-        let points = line.split(',').fold(vec![(0, 0)], |path, next| {
-            let (dir, dist) = next.split_at(1);
+        let mut points = vec![(0, 0)];
+        let mut current = points[0];
+        for (dir, dist) in line.split(',').map(|op| op.split_at(1)) {
+            let dir = dir.chars().next().unwrap();
             let dist = dist.parse().unwrap();
-            let next_pos = move_dir(dir, path.last().copied().unwrap());
-            path.into_iter()
-                .chain(successors(Some(next_pos), |&pos| Some(move_dir(dir, pos))).take(dist))
-                .collect()
-        });
-        Wire { points }
+            for _ in 0..dist {
+                current = move_dir(dir, current);
+                points.push(current);
+            }
+        }
+        Self { points }
     }
 }
 
-fn move_dir(dir: &str, point: (i32, i32)) -> (i32, i32) {
+fn move_dir(dir: char, point: (i32, i32)) -> (i32, i32) {
     let (x, y) = point;
     match dir {
-        "U" => (x, y - 1),
-        "D" => (x, y + 1),
-        "L" => (x - 1, y),
-        "R" => (x + 1, y),
+        'U' => (x, y - 1),
+        'D' => (x, y + 1),
+        'L' => (x - 1, y),
+        'R' => (x + 1, y),
         _ => unreachable!("invalid direction"),
     }
 }
 
 #[aoc(day3, part1)]
 fn part1(wires: &(Wire, Wire)) -> u32 {
-    let (wire1, wire2) = wires;
-    let wire2: HashSet<_> = wire2.points.iter().collect();
-    wire1
-        .points
+    min_val(wires, |point| point.0.abs() as u32 + point.1.abs() as u32)
+}
+
+fn min_val<F>(wires: &(Wire, Wire), dist_fn: F) -> u32
+where
+    F: Fn(&(i32, i32)) -> u32,
+{
+    let wire_1 = &wires.0.points;
+    let wire_2: HashSet<_> = wires.1.points.iter().collect();
+    wire_1
         .iter()
-        .filter_map(|&point1| {
-            if wire2.contains(&point1) {
-                Some(dist((0, 0), point1))
-            } else {
-                None
-            }
-        })
+        .filter(|&point| wire_2.contains(point))
+        .map(dist_fn)
         .filter(|&dist| dist != 0)
         .min()
         .unwrap()
-}
-
-fn dist(point1: (i32, i32), point2: (i32, i32)) -> u32 {
-    (point1.0 - point2.0).abs() as u32 + (point1.1 - point2.1).abs() as u32
 }
 
 #[aoc(day3, part2)]
-fn part2(wires: &(Wire, Wire)) -> usize {
-    let (wire1, wire2) = wires;
-    let wire2: HashMap<_, _> = wire2
-        .points
-        .iter()
-        .enumerate()
-        .map(|(steps, point)| (point, steps))
-        .collect();
-    wire1
-        .points
-        .iter()
-        .enumerate()
-        .filter_map(|(steps1, &point1)| wire2.get(&point1).map(|steps2| steps1 + steps2))
-        .filter(|&dist| dist != 0)
-        .min()
-        .unwrap()
+fn part2(wires: &(Wire, Wire)) -> u32 {
+    min_val(wires, |point| {
+        get_steps(&wires.0, *point) + get_steps(&wires.1, *point)
+    })
+}
+
+fn get_steps(wire: &Wire, point: (i32, i32)) -> u32 {
+    wire.points.iter().position(|&p| p == point).unwrap() as u32
 }
 
 #[cfg(test)]
