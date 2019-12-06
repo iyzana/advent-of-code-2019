@@ -7,4 +7,6 @@ mod day3;
 mod day4;
 mod day5;
 
+mod computer;
+
 aoc_lib! { year = 2019; }
