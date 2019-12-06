@@ -1,149 +1,139 @@
 #[aoc_generator(day5)]
-fn parse(input: &str) -> Program {
-    let data = input.split(',').map(|d| d.parse().unwrap()).collect();
-    Program {
-        data,
-        instruction_ptr: 0,
-        input: vec![],
-        output: vec![],
-    }
+fn parse(input: &str) -> Vec<i32> {
+    input.split(',').map(|m| m.parse().unwrap()).collect()
 }
 
 #[derive(Clone)]
 struct Program {
-    data: Vec<i32>,
+    memory: Vec<i32>,
     instruction_ptr: usize,
     input: Vec<i32>,
     output: Vec<i32>,
 }
 
 impl Program {
+    fn new(code: &[i32], input: &[i32]) -> Self {
+        let mut input = input.to_vec();
+        input.reverse();
+        Self {
+            memory: code.to_vec(),
+            instruction_ptr: 0,
+            input,
+            output: vec![],
+        }
+    }
+
     fn run(&mut self) -> i32 {
-        while self.parse_op(self.instruction_ptr).execute(self) {}
+        loop {
+            let Instruction { operation, params } = &Instruction::parse(self);
+            self.instruction_ptr += params.len() + 1;
+            match operation {
+                Operation::Add => self.compute(params, |a, b| a + b),
+                Operation::Mul => self.compute(params, |a, b| a * b),
+                Operation::Read => {
+                    let val = self.input.pop().expect("no input");
+                    self.store(&params[0], val)
+                }
+                Operation::Write => self.output.push(self.load(&params[0])),
+                Operation::JumpIfTrue => {
+                    if self.load(&params[0]) != 0 {
+                        self.instruction_ptr = self.load(&params[1]) as usize;
+                    }
+                }
+                Operation::JumpIfFalse => {
+                    if self.load(&params[0]) == 0 {
+                        self.instruction_ptr = self.load(&params[1]) as usize;
+                    }
+                }
+                Operation::LessThan => self.compute(params, |a, b| (a < b) as i32),
+                Operation::Equals => self.compute(params, |a, b| (a == b) as i32),
+                Operation::Quit => break,
+            }
+        }
+
         *self.output.last().unwrap()
     }
 
-    fn parse_op(&self, pos: usize) -> Instruction {
-        let instruction = self.data[pos];
-        let opcode = instruction % 100;
-        let param_types = (instruction / 100).to_string();
-
-        match opcode {
-            1 => Instruction::Add(
-                self.parse_param(&param_types, pos, 0),
-                self.parse_param(&param_types, pos, 1),
-                self.parse_param(&param_types, pos, 2),
-            ),
-            2 => Instruction::Mul(
-                self.parse_param(&param_types, pos, 0),
-                self.parse_param(&param_types, pos, 1),
-                self.parse_param(&param_types, pos, 2),
-            ),
-            3 => Instruction::Read(self.parse_param(&param_types, pos, 0)),
-            4 => Instruction::Write(self.parse_param(&param_types, pos, 0)),
-            5 => Instruction::JumpIfTrue(
-                self.parse_param(&param_types, pos, 0),
-                self.parse_param(&param_types, pos, 1),
-            ),
-            6 => Instruction::JumpIfFalse(
-                self.parse_param(&param_types, pos, 0),
-                self.parse_param(&param_types, pos, 1),
-            ),
-            7 => Instruction::LessThan(
-                self.parse_param(&param_types, pos, 0),
-                self.parse_param(&param_types, pos, 1),
-                self.parse_param(&param_types, pos, 2),
-            ),
-            8 => Instruction::Equals(
-                self.parse_param(&param_types, pos, 0),
-                self.parse_param(&param_types, pos, 1),
-                self.parse_param(&param_types, pos, 2),
-            ),
-            99 => Instruction::Quit,
-            _ => unreachable!("invalid opcode"),
-        }
+    fn load(&self, param: &Parameter) -> i32 {
+        param.load(&self.memory)
     }
 
-    fn parse_param(&self, types: &str, pos: usize, index: usize) -> Parameter {
-        let val = self.data[pos + index + 1];
-        match types.chars().nth_back(index).unwrap_or('0') {
-            '0' if val >= 0 => Parameter::Position(val as usize),
-            '0' if val < 0 => panic!("negative positional paramter"),
-            '1' => Parameter::Immediate(val),
-            _ => unreachable!("invalid parameter mode"),
-        }
+    fn store(&mut self, param: &Parameter, val: i32) {
+        param.store(&mut self.memory, val)
+    }
+
+    fn compute<F>(&mut self, params: &[Parameter], compute: F)
+    where
+        F: Fn(i32, i32) -> i32,
+    {
+        self.store(
+            &params[2],
+            compute(self.load(&params[0]), self.load(&params[1])),
+        );
     }
 }
 
 #[derive(Debug)]
-enum Instruction {
-    Add(Parameter, Parameter, Parameter),
-    Mul(Parameter, Parameter, Parameter),
-    Read(Parameter),
-    Write(Parameter),
-    JumpIfTrue(Parameter, Parameter),
-    JumpIfFalse(Parameter, Parameter),
-    LessThan(Parameter, Parameter, Parameter),
-    Equals(Parameter, Parameter, Parameter),
+struct Instruction {
+    operation: Operation,
+    params: Vec<Parameter>,
+}
+
+#[derive(Debug)]
+enum Operation {
+    Add,
+    Mul,
+    Read,
+    Write,
+    JumpIfTrue,
+    JumpIfFalse,
+    LessThan,
+    Equals,
     Quit,
 }
 
 impl Instruction {
-    fn execute(&self, program: &mut Program) -> bool {
-        let Program {
-            data,
-            instruction_ptr,
-            ..
-        } = program;
-        *instruction_ptr += self.arg_count() + 1;
-        match self {
-            Instruction::Add(arg1, arg2, out) => {
-                let val = arg1.get(data) + arg2.get(data);
-                out.write(data, val);
-            }
-            Instruction::Mul(arg1, arg2, out) => {
-                let val = arg1.get(data) * arg2.get(data);
-                out.write(data, val);
-            }
-            Instruction::Read(out) => out.write(data, program.input.pop().expect("no input")),
-            Instruction::Write(arg1) => program.output.push(arg1.get(data)),
-            Instruction::JumpIfTrue(cmp, target) => {
-                if cmp.get(data) != 0 {
-                    assert!(target.get(data) >= 0);
-                    *instruction_ptr = target.get(data) as usize;
-                }
-            }
-            Instruction::JumpIfFalse(cmp, target) => {
-                if cmp.get(data) == 0 {
-                    assert!(target.get(data) >= 0);
-                    *instruction_ptr = target.get(data) as usize;
-                }
-            }
-            Instruction::LessThan(arg1, arg2, out) => {
-                let val = (arg1.get(data) < arg2.get(data)) as i32;
-                out.write(data, val);
-            }
-            Instruction::Equals(arg1, arg2, out) => {
-                let val = (arg1.get(data) == arg2.get(data)) as i32;
-                out.write(data, val);
-            }
-            Instruction::Quit => return false,
-        }
-        true
+    fn parse(program: &Program) -> Instruction {
+        let (operation, param_count) = Self::parse_opcode(program);
+        let params = Self::parse_params(program, param_count);
+
+        Instruction { operation, params }
     }
 
-    fn arg_count(&self) -> usize {
-        match self {
-            Instruction::Add(_, _, _) => 3,
-            Instruction::Mul(_, _, _) => 3,
-            Instruction::Read(_) => 1,
-            Instruction::Write(_) => 1,
-            Instruction::JumpIfTrue(_, _) => 2,
-            Instruction::JumpIfFalse(_, _) => 2,
-            Instruction::LessThan(_, _, _) => 3,
-            Instruction::Equals(_, _, _) => 3,
-            Instruction::Quit => 0,
+    fn parse_opcode(program: &Program) -> (Operation, usize) {
+        let instruction = program.memory[program.instruction_ptr];
+        let opcode = instruction % 100;
+        match opcode {
+            1 => (Operation::Add, 3),
+            2 => (Operation::Mul, 3),
+            3 => (Operation::Read, 1),
+            4 => (Operation::Write, 1),
+            5 => (Operation::JumpIfTrue, 2),
+            6 => (Operation::JumpIfFalse, 2),
+            7 => (Operation::LessThan, 3),
+            8 => (Operation::Equals, 3),
+            99 => (Operation::Quit, 0),
+            _ => panic!("invalid opcode"),
         }
+    }
+
+    fn parse_params(program: &Program, count: usize) -> Vec<Parameter> {
+        let instruction = program.memory[program.instruction_ptr];
+        let param_memory =
+            &program.memory[program.instruction_ptr + 1..=program.instruction_ptr + count];
+        let kinds = (instruction / 100).to_string();
+        let mut kinds = kinds.chars().rev();
+        param_memory
+            .iter()
+            .map(|&val| match kinds.next().unwrap_or('0') {
+                '0' => {
+                    assert!(val >= 0, "negative positional parameter");
+                    Parameter::Position(val as usize)
+                }
+                '1' => Parameter::Immediate(val),
+                _ => panic!("invalid parameter mode"),
+            })
+            .collect()
     }
 }
 
@@ -154,35 +144,27 @@ enum Parameter {
 }
 
 impl Parameter {
-    fn get(&self, data: &[i32]) -> i32 {
+    fn load(&self, memory: &[i32]) -> i32 {
         match *self {
-            Parameter::Position(pos) => data[pos],
+            Parameter::Position(pos) => memory[pos],
             Parameter::Immediate(val) => val,
         }
     }
 
-    fn write(&self, data: &mut [i32], val: i32) {
+    fn store(&self, memory: &mut [i32], val: i32) {
         match *self {
-            Parameter::Position(pos) => data[pos] = val,
-            _ => unreachable!("invalid output parameter type"),
+            Parameter::Position(pos) => memory[pos] = val,
+            _ => panic!("invalid output parameter type"),
         }
     }
 }
 
 #[aoc(day5, part1)]
-fn part1(program: &Program) -> i32 {
-    let mut program = Program {
-        input: vec![1],
-        ..program.clone()
-    };
-    program.run()
+fn part1(code: &[i32]) -> i32 {
+    Program::new(code, &[1]).run()
 }
 
 #[aoc(day5, part2)]
-fn part2(program: &Program) -> i32 {
-    let mut program = Program {
-        input: vec![5],
-        ..program.clone()
-    };
-    program.run()
+fn part2(code: &[i32]) -> i32 {
+    Program::new(code, &[5]).run()
 }
